@@ -365,15 +365,33 @@
         http.send();
     }
 
-    function getImageData(img, callback) {
+    function getImageData(img, callback, readOnlySize) {
         function handleBinaryFile(binFile) {
-            var data = findEXIFinJPEG(binFile);
+            var data = {};
+            try {
+                data = findEXIFinJPEG(binFile);
+            } catch (e) {
+                if (debug) console.log(e.message);
+                data = {};
+            }
             img.exifdata = data || {};
-            var iptcdata = findIPTCinJPEG(binFile);
+            var iptcdata = {};
+            try {
+                iptcdata = findIPTCinJPEG(binFile);
+            } catch (e) {
+                if (debug) console.log(e.message);
+                iptcdata = {};
+            }
             img.iptcdata = iptcdata || {};
             if (EXIF.isXmpEnabled) {
-               var xmpdata= findXMPinJPEG(binFile);
-               img.xmpdata = xmpdata || {};               
+               var xmpdata = {};
+               try {
+                   xmpdata = findXMPinJPEG(binFile);
+               } catch (e) {
+                   if (debug) console.log(e.message);
+                   xmpdata = {};
+               }
+               img.xmpdata = xmpdata || {};
             }
             if (callback) {
                 callback.call(img);
@@ -413,8 +431,12 @@
                 if (debug) console.log("Got file of length " + e.target.result.byteLength);
                 handleBinaryFile(e.target.result);
             };
+            if (readOnlySize) {
+              fileReader.readAsArrayBuffer(img.slice(0, readOnlySize));
+            } else {
+              fileReader.readAsArrayBuffer(img);
+            }
 
-            fileReader.readAsArrayBuffer(img);
         }
     }
 
@@ -468,7 +490,7 @@
         }
 
         var offset = 2,
-            length = file.byteLength;
+            length = file.byteLength-5; //we will check the 5 next bytes
 
 
         var isFieldSegmentStart = function(dataView, offset){
@@ -724,14 +746,14 @@
                 break;
 
             case 1:
-                console.log("Thumbnail image format is TIFF, which is not implemented.");
+                if (debug) console.log("Thumbnail image format is TIFF, which is not implemented.");
                 break;
             default:
-                console.log("Unknown thumbnail image format '%s'", thumbTags['Compression']);
+                if (debug) console.log("Unknown thumbnail image format '%s'", thumbTags['Compression']);
             }
         }
         else if (thumbTags['PhotometricInterpretation'] == 2) {
-            console.log("Thumbnail image format is RGB, which is not implemented.");
+            if (debug) console.log("Thumbnail image format is RGB, which is not implemented.");
         }
         return thumbTags;
     }
@@ -868,6 +890,10 @@
                 var indexOfXmp = xmpString.indexOf('x:xmpmeta') + 10
                 //Many custom written programs embed xmp/xml without any namespace. Following are some of them.
                 //Without these namespaces, XML is thought to be invalid by parsers
+                var xmpStringInner = xmpString.slice(indexOfXmp);
+                if (xmpStringInner == "") {
+                    return {};
+                }
                 xmpString = xmpString.slice(0, indexOfXmp)
                             + 'xmlns:Iptc4xmpCore="http://iptc.org/std/Iptc4xmpCore/1.0/xmlns/" '
                             + 'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
@@ -880,9 +906,12 @@
                             + 'xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" '
                             + 'xmlns:xapGImg="http://ns.adobe.com/xap/1.0/g/img/" '
                             + 'xmlns:Iptc4xmpExt="http://iptc.org/std/Iptc4xmpExt/2008-02-29/" '
-                            + xmpString.slice(indexOfXmp)
-
+                            + xmpStringInner;
                 var domDocument = dom.parseFromString( xmpString, 'text/xml' );
+                if (domDocument.getElementsByTagName("parsererror").length) {
+                    if (debug) console.log("invalid xmpString data");
+                    return {};
+                }
                 return xml2Object(domDocument);
             } else{
              offset++;
@@ -892,7 +921,7 @@
 
     function xml2json(xml) {
         var json = {};
-      
+
         if (xml.nodeType == 1) { // element node
           if (xml.attributes.length > 0) {
             json['@attributes'] = {};
@@ -904,7 +933,7 @@
         } else if (xml.nodeType == 3) { // text node
           return xml.nodeValue;
         }
-      
+
         // deal with children
         if (xml.hasChildNodes()) {
           for(var i = 0; i < xml.childNodes.length; i++) {
@@ -922,7 +951,7 @@
             }
           }
         }
-        
+
         return json;
     }
 
@@ -961,7 +990,8 @@
             }
             return obj;
           } catch (e) {
-              console.log(e.message);
+              if (debug) console.log(e.message);
+              return {};
           }
     }
 
@@ -973,14 +1003,14 @@
         EXIF.isXmpEnabled = false;
     }
 
-    EXIF.getData = function(img, callback) {
+    EXIF.getData = function(img, callback, readOnlySize) {
         if (((self.Image && img instanceof self.Image)
             || (self.HTMLImageElement && img instanceof self.HTMLImageElement))
             && !img.complete)
             return false;
 
         if (!imageHasData(img)) {
-            getImageData(img, callback);
+            getImageData.apply(this,arguments);
         } else {
             if (callback) {
                 callback.call(img);
@@ -993,7 +1023,7 @@
         if (!imageHasData(img)) return;
         return img.exifdata[tag];
     }
-    
+
     EXIF.getIptcTag = function(img, tag) {
         if (!imageHasData(img)) return;
         return img.iptcdata[tag];
@@ -1011,7 +1041,7 @@
         }
         return tags;
     }
-    
+
     EXIF.getAllIptcTags = function(img) {
         if (!imageHasData(img)) return {};
         var a,
@@ -1055,5 +1085,5 @@
             return EXIF;
         });
     }
-}.call(this));
 
+}.call(this));
